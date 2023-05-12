@@ -24,9 +24,7 @@ const (
 
 type opRequest struct {
 	Limit     int    `json:"limit,omitempty"`
-	StartTime string `json:"start_time,omitempty"`
-	EndTime   string `json:"end_time,omitempty"`
-	Cursor    string `json:"cursor,omitempty"`
+	StartTime string `json:"created-at,omitempty"`
 }
 
 var URL = map[string]string{
@@ -166,13 +164,11 @@ func (a *ITGlueAdapter) fetchEvents(url string) {
 func (a *ITGlueAdapter) makeOneRequest(url string, lastCursor string) ([]utils.Dict, string) {
 	// Prepare the request body.
 	reqData := opRequest{}
-	if lastCursor != "" {
-		reqData.Cursor = lastCursor
-	} else {
-		a.conf.ClientOptions.DebugLog(fmt.Sprintf("requesting from %s starting now", url))
-		reqData.StartTime = time.Now().Format(time.RFC3339)
-		reqData.Limit = 1000
-	}
+
+	a.conf.ClientOptions.DebugLog(fmt.Sprintf("requesting from %s starting now", url))
+	reqData.StartTime = time.Now().Format(time.RFC3339)
+	reqData.Limit = 1000
+
 	b, err := json.Marshal(reqData)
 	if err != nil {
 		a.doStop.Set()
@@ -180,7 +176,7 @@ func (a *ITGlueAdapter) makeOneRequest(url string, lastCursor string) ([]utils.D
 	}
 
 	// Prepare the request.
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s%s", a.endpoint, url), bytes.NewBuffer(b))
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s%s?filter[created_at]=%s", a.endpoint, url, reqData.StartTime), bytes.NewBuffer(b))
 	if err != nil {
 		a.doStop.Set()
 		return nil, ""
