@@ -1,4 +1,4 @@
-module github.com/refractionPOINT/usp-adapters
+module github.com/reconinfosec/usp-adapters
 
 go 1.20
 
@@ -11,6 +11,7 @@ require (
 	github.com/nxadm/tail v1.4.8
 	github.com/refractionPOINT/evtx v0.0.0-20221217013001-bbcbd9938c6e
 	github.com/refractionPOINT/go-uspclient v0.0.0-20230227011818-1c8752a42005
+	github.com/refractionPOINT/usp-adapters v0.0.0-20230511222808-d88d9bcb44b1
 	github.com/vmihailenco/msgpack/v5 v5.3.5
 	golang.org/x/oauth2 v0.7.0
 	golang.org/x/sync v0.1.0

@@ -1,6 +1,7 @@
 package usp_itglue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,20 +14,42 @@ import (
 	"time"
 
 	"github.com/refractionPOINT/go-uspclient"
+	"github.com/refractionPOINT/go-uspclient/protocol"
 	"github.com/refractionPOINT/usp-adapters/utils"
 )
 
 const (
-	logURL = "/logs"
+	logsURL = "/logs"
 )
+
+type opRequest struct {
+	Limit     int    `json:"limit,omitempty"`
+	StartTime string `json:"start_time,omitempty"`
+	EndTime   string `json:"end_time,omitempty"`
+	Cursor    string `json:"cursor,omitempty"`
+}
 
 var URL = map[string]string{
 	"enterprise": "https://api.itglue.com",
 }
 
+type ITGlueAdapter struct {
+	conf       ITGlueConfig
+	uspClient  *uspclient.Client
+	httpClient *http.Client
+
+	endpoint string
+
+	chStopped chan struct{}
+	wgSenders sync.WaitGroup
+	doStop    *utils.Event
+
+	ctx context.Context
+}
+
 type ITGlueConfig struct {
 	ClientOptions uspclient.ClientOptions `json:"client_options" yaml:"client_options"`
-	ApiKey        string                  `json:"apikey" yaml:"apikey"`
+	Token         string                  `json:"token" yaml:"token"`
 	Endpoint      string                  `json:"endpoint" yaml:"endpoint"`
 }
 
@@ -34,8 +57,8 @@ func (c *ITGlueConfig) Validate() error {
 	if err := c.ClientOptions.Validate(); err != nil {
 		return fmt.Errorf("client_options: %v", err)
 	}
-	if c.ApiKey == "" {
-		return errors.New("missing API key")
+	if c.Token == "" {
+		return errors.New("missing token")
 	}
 	if c.Endpoint == "" {
 		return errors.New("missing endpoint")
@@ -50,7 +73,7 @@ func (c *ITGlueConfig) Validate() error {
 func NewITGlueAdapter(conf ITGlueConfig) (*ITGlueAdapter, chan struct{}, error) {
 	var err error
 	a := &ITGlueAdapter{
-		config: conf,
+		conf:   conf,
 		ctx:    context.Background(),
 		doStop: utils.NewEvent(),
 	}
@@ -80,7 +103,7 @@ func NewITGlueAdapter(conf ITGlueConfig) (*ITGlueAdapter, chan struct{}, error) 
 	a.chStopped = make(chan struct{})
 
 	a.wgSenders.Add(3)
-	go a.GetLogs()
+	go a.fetchEvents(logsURL)
 
 	go func() {
 		a.wgSenders.Wait()
@@ -90,98 +113,107 @@ func NewITGlueAdapter(conf ITGlueConfig) (*ITGlueAdapter, chan struct{}, error) 
 	return a, a.chStopped, nil
 }
 
-type ITGlueAdapter struct {
-	config     ITGlueConfig
-	lastLogID  string
-	lastCalled bool
+func (a *ITGlueAdapter) Close() error {
+	a.conf.ClientOptions.DebugLog("closing")
+	a.doStop.Set()
+	a.wgSenders.Wait()
+	err1 := a.uspClient.Drain(1 * time.Minute)
+	_, err2 := a.uspClient.Close()
+	a.httpClient.CloseIdleConnections()
 
-	uspClient  *uspclient.Client
-	httpClient *http.Client
-
-	endpoint string
-
-	chStopped chan struct{}
-	wgSenders sync.WaitGroup
-	doStop    *utils.Event
-
-	ctx context.Context
-}
-
-type ITGlueResponse struct {
-	Data []ITGlueRecord `json:"data"`
-}
-
-type ITGlueRecord struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id"`
-	Attributes interface{} `json:"attributes"`
-}
-
-func (adapter *ITGlueAdapter) HandleRequest(w http.ResponseWriter, r *http.Request) {
-	response, err := adapter.GetLogs()
-	if err != nil {
-		fmt.Fprintf(w, "Error: %v", err)
-		return
+	if err1 != nil {
+		return err1
 	}
 
-	// If this is not the first call and we have a last log ID,
-	// filter the response to only include logs with an ID greater
-	// than the last log ID.
-	if adapter.lastCalled && adapter.lastLogID != "" {
-		filteredResponse := ITGlueResponse{}
-		for _, record := range response.Data {
-			if record.ID > adapter.lastLogID {
-				filteredResponse.Data = append(filteredResponse.Data, record)
+	return err2
+}
+
+func (a *ITGlueAdapter) fetchEvents(url string) {
+	defer a.wgSenders.Done()
+	defer a.conf.ClientOptions.DebugLog(fmt.Sprintf("fetching of %s events exiting", url))
+
+	lastCursor := ""
+	for !a.doStop.WaitFor(30 * time.Second) {
+		// The makeOneRequest function handles error
+		// handling and fatal error handling.
+		items, newCursor := a.makeOneRequest(url, lastCursor)
+		lastCursor = newCursor
+		if items == nil {
+			continue
+		}
+
+		for _, item := range items {
+			msg := &protocol.DataMessage{
+				JsonPayload: item,
+				TimestampMs: uint64(time.Now().UnixNano() / int64(time.Millisecond)),
+			}
+			if err := a.uspClient.Ship(msg, 10*time.Second); err != nil {
+				if err == uspclient.ErrorBufferFull {
+					a.conf.ClientOptions.OnWarning("stream falling behind")
+					err = a.uspClient.Ship(msg, 1*time.Hour)
+				}
+				if err == nil {
+					continue
+				}
+				a.conf.ClientOptions.OnError(fmt.Errorf("Ship(): %v", err))
+				a.doStop.Set()
+				return
 			}
 		}
-		response = filteredResponse
 	}
-
-	// Update the last log ID and set lastCalled to true
-	if len(response.Data) > 0 {
-		lastLog := response.Data[len(response.Data)-1]
-		adapter.lastLogID = lastLog.ID
-		adapter.lastCalled = true
-	}
-
-	json.NewEncoder(w).Encode(response)
 }
 
-func (adapter ITGlueAdapter) GetLogs() (ITGlueResponse, error) {
-	var response ITGlueResponse
-
-	url := adapter.config.Endpoint + logURL
-
-	// If this is not the first call and we have a last log ID,
-	// add a filter parameter to only retrieve logs with an ID greater
-	// than the last log ID.
-	if adapter.lastCalled && adapter.lastLogID != "" {
-		url += "?filter[id]=gt:" + adapter.lastLogID
+func (a *ITGlueAdapter) makeOneRequest(url string, lastCursor string) ([]utils.Dict, string) {
+	// Prepare the request body.
+	reqData := opRequest{}
+	if lastCursor != "" {
+		reqData.Cursor = lastCursor
+	} else {
+		a.conf.ClientOptions.DebugLog(fmt.Sprintf("requesting from %s starting now", url))
+		reqData.StartTime = time.Now().Format(time.RFC3339)
+		reqData.Limit = 1000
+	}
+	b, err := json.Marshal(reqData)
+	if err != nil {
+		a.doStop.Set()
+		return nil, ""
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	// Prepare the request.
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s%s", a.endpoint, url), bytes.NewBuffer(b))
 	if err != nil {
-		return response, err
+		a.doStop.Set()
+		return nil, ""
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", adapter.config.ApiKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", a.conf.Token))
 
-	client := &http.Client{}
-	res, err := client.Do(req)
+	// Issue the request.
+	resp, err := a.httpClient.Do(req)
 	if err != nil {
-		return response, err
+		a.conf.ClientOptions.OnError(fmt.Errorf("http.Client.Do(): %v", err))
+		return nil, lastCursor
 	}
-	defer res.Body.Close()
+	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return response, err
-	}
-
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		return response, err
+	// Evaluate if success.
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		a.conf.ClientOptions.OnWarning(fmt.Sprintf("itglue api non-200: %s\nREQUEST: %s\nRESPONSE: %s", resp.Status, string(b), string(body)))
+		return nil, lastCursor
 	}
 
-	return response, nil
+	// Parse the response.
+	respData := utils.Dict{}
+	jsonDecoder := json.NewDecoder(resp.Body)
+	if err := jsonDecoder.Decode(&respData); err != nil {
+		a.conf.ClientOptions.OnError(fmt.Errorf("itglue api invalid json: %v", err))
+		return nil, lastCursor
+	}
+
+	// Report if a cursor was returned
+	// as well as the items.
+	lastCursor = respData.FindOneString("cursor")
+	items, _ := respData.GetListOfDict("items")
+	return items, lastCursor
 }

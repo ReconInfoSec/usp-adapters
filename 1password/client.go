@@ -75,7 +75,7 @@ func (c *OnePasswordConfig) Validate() error {
 	return nil
 }
 
-func NewOnePasswordpAdapter(conf OnePasswordConfig) (*OnePasswordAdapter, chan struct{}, error) {
+func NewOnePasswordAdapter(conf OnePasswordConfig) (*OnePasswordAdapter, chan struct{}, error) {
 	var err error
 	a := &OnePasswordAdapter{
 		conf:   conf,

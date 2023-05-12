@@ -13,25 +13,25 @@ import (
 	"syscall"
 	"time"
 
+	usp_1password "github.com/reconinfosec/usp-adapters/1password"
+	usp_azure_event_hub "github.com/reconinfosec/usp-adapters/azure_event_hub"
+	usp_duo "github.com/reconinfosec/usp-adapters/duo"
+	usp_evtx "github.com/reconinfosec/usp-adapters/evtx"
+	usp_file "github.com/reconinfosec/usp-adapters/file"
+	usp_gcs "github.com/reconinfosec/usp-adapters/gcs"
 	usp_itglue "github.com/reconinfosec/usp-adapters/itglue"
+	usp_o365 "github.com/reconinfosec/usp-adapters/o365"
+	usp_pubsub "github.com/reconinfosec/usp-adapters/pubsub"
+	usp_s3 "github.com/reconinfosec/usp-adapters/s3"
+	usp_simulator "github.com/reconinfosec/usp-adapters/simulator"
+	usp_slack "github.com/reconinfosec/usp-adapters/slack"
+	usp_sqs "github.com/reconinfosec/usp-adapters/sqs"
+	usp_sqs_files "github.com/reconinfosec/usp-adapters/sqs-files"
+	usp_stdin "github.com/reconinfosec/usp-adapters/stdin"
+	usp_syslog "github.com/reconinfosec/usp-adapters/syslog"
+	"github.com/reconinfosec/usp-adapters/utils"
+	usp_wel "github.com/reconinfosec/usp-adapters/wel"
 	"github.com/refractionPOINT/go-uspclient"
-	usp_1password "github.com/refractionPOINT/usp-adapters/1password"
-	usp_azure_event_hub "github.com/refractionPOINT/usp-adapters/azure_event_hub"
-	usp_duo "github.com/refractionPOINT/usp-adapters/duo"
-	usp_evtx "github.com/refractionPOINT/usp-adapters/evtx"
-	usp_file "github.com/refractionPOINT/usp-adapters/file"
-	usp_gcs "github.com/refractionPOINT/usp-adapters/gcs"
-	usp_o365 "github.com/refractionPOINT/usp-adapters/o365"
-	usp_pubsub "github.com/refractionPOINT/usp-adapters/pubsub"
-	usp_s3 "github.com/refractionPOINT/usp-adapters/s3"
-	usp_simulator "github.com/refractionPOINT/usp-adapters/simulator"
-	usp_slack "github.com/refractionPOINT/usp-adapters/slack"
-	usp_sqs "github.com/refractionPOINT/usp-adapters/sqs"
-	usp_sqs_files "github.com/refractionPOINT/usp-adapters/sqs-files"
-	usp_stdin "github.com/refractionPOINT/usp-adapters/stdin"
-	usp_syslog "github.com/refractionPOINT/usp-adapters/syslog"
-	"github.com/refractionPOINT/usp-adapters/utils"
-	usp_wel "github.com/refractionPOINT/usp-adapters/wel"
 
 	"gopkg.in/yaml.v2"
 )
@@ -197,12 +197,12 @@ func runAdapter(method string, runtimeConfigs RuntimeConfig, configs GeneralConf
 		configs.OnePassword.ClientOptions = applyLogging(configs.OnePassword.ClientOptions)
 		configs.OnePassword.ClientOptions.Architecture = "usp_adapter"
 		printConfig(method, configs.OnePassword)
-		client, chRunning, err = usp_1password.NewOnePasswordpAdapter(configs.OnePassword)
+		client, chRunning, err = usp_1password.NewOnePasswordAdapter(configs.OnePassword)
 	} else if method == "itglue" {
 		configs.ITGlue.ClientOptions = applyLogging(configs.ITGlue.ClientOptions)
 		configs.ITGlue.ClientOptions.Architecture = "usp_adapter"
 		printConfig(method, configs.ITGlue)
-		client, chRunning, err = usp_itglue.NewITGluepAdapter(configs.ITGlue)
+		client, chRunning, err = usp_itglue.NewITGlueAdapter(configs.ITGlue)
 	} else if method == "office365" {
 		configs.Office365.ClientOptions = applyLogging(configs.Office365.ClientOptions)
 		configs.Office365.ClientOptions.Architecture = "usp_adapter"
